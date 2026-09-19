@@ -538,6 +538,7 @@ input:focus-visible {
 .message.post-comprehension-copy {
   width: 100%;
   color: var(--page-text);
+  white-space: pre;
 }
 
 .gray-highlight {
@@ -604,6 +605,11 @@ body.task-mode {
   place-items: center;
 }
 
+.post-comprehension-page,
+.practice-intro-page {
+  width: min(1500px, calc(100vw - 64px));
+}
+
 .content-screen.practice-intro-screen {
   background: var(--task-background);
 }
@@ -615,18 +621,19 @@ body.task-mode {
 .practice-intro-copy,
 .message.main-intro-message {
   font-family: "Times New Roman", Times, serif;
-  font-size: clamp(24px, 2.2vw, 42px);
+  font-size: clamp(24px, 2.604vw, 50px);
   font-weight: 700;
 }
 
 .practice-intro-copy {
-  width: min(1000px, 100%);
+  width: min(1500px, 100%);
   text-align: center;
   line-height: 1.485;
 }
 
 .practice-intro-copy p {
   margin: 0 0 50.6px;
+  white-space: nowrap;
 }
 
 .practice-intro-copy p:last-child {
