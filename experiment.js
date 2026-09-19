@@ -63,12 +63,14 @@ const fullscreenStartButton = document.getElementById("fullscreen-start");
 const welcomeError = document.getElementById("welcome-error");
 
 const urlParameters = new URLSearchParams(window.location.search);
-// Connect URL parameter names are case-sensitive. No participantId means preview.
+// Only the exact public project URL is a resettable preview. Every other URL,
+// including Connect URLs with unknown parameter names, uses participant safeguards.
+const RESETTABLE_PREVIEW_URL = "https://clingtou.github.io/gamble-task-connect/";
 const participantId = urlParameters.get("participantId")?.trim() || "missing";
 const projectId = urlParameters.get("projectId")?.trim() || DATAPIPE_EXPERIMENT_ID;
 const assignmentId = urlParameters.get("assignmentId")?.trim() || randomId(12);
 const subjectId = participantId !== "missing" ? participantId : getOrCreateAnonymousSubjectId();
-const previewMode = urlParameters.get("preview") === "1" || participantId === "missing";
+const previewMode = window.location.href === RESETTABLE_PREVIEW_URL;
 const studyLockKey = `gamble_task_status_${subjectId}_${projectId}`;
 const completionSnapshotKey = `${studyLockKey}_completion`;
 const dataFilename = `${safeFilename(subjectId)}_${safeFilename(assignmentId)}_${Date.now()}_gamble.csv`;
@@ -226,6 +228,7 @@ function setStoredStudyStatus(status, extra = {}) {
 }
 
 function getStoredCompletionSnapshot() {
+  if (previewMode) return null;
   try {
     const stored = window.localStorage.getItem(completionSnapshotKey);
     const snapshot = stored ? JSON.parse(stored) : null;
@@ -237,6 +240,7 @@ function getStoredCompletionSnapshot() {
 }
 
 function setStoredCompletionSnapshot(snapshot) {
+  if (previewMode) return false;
   try {
     window.localStorage.setItem(completionSnapshotKey, JSON.stringify(snapshot));
     return true;
