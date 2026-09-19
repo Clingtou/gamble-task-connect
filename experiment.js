@@ -4,13 +4,13 @@
 // conditions in DataPipe: 0 = gain_larger, 1 = loss_larger.
 const DATAPIPE_EXPERIMENT_ID = "DlskR9taEr8q";
 
-const CONNECT_COMPLETION_CODE = "";
-const CONNECT_COMPLETION_URL = "";
+const CONNECT_COMPLETION_CODE = "8F575C643F";
+const CONNECT_COMPLETION_URL = "https://connect.cloudresearch.com/participant/project/8F575C643F/complete";
 
 // Only BonusDollars is exported as cash. RT is in seconds for every row;
 // time_elapsed is milliseconds since the experiment script started.
 const CSV_COLUMNS = [
-  "trial_type", "Phase", "Subject", "participantId", "projectId", "assignmentId",
+  "trial_type", "Phase", "participantId", "projectId", "assignmentId",
   "datapipe_experiment_id", "datapipe_condition_source", "ConditionIndex", "ConditionLabel",
   "AcceptKey", "Gain", "Loss", "Fontsize", "GainOnLeft", "Choice", "RT", "KeyResponse", "Trial",
   "ComprehensionAttempts", "ComprehensionPassed", "ComprehensionIncorrectItems", "ComprehensionResponseJSON",
@@ -130,7 +130,7 @@ function startPageVisit(screen, details = {}) {
 function activityRows(status) {
   const now = elapsedMilliseconds();
   return pageVisits.map((page) => ({
-    trial_type: page.pageName, Phase: "page", Subject: subjectId, assignmentId: assignmentId,
+    trial_type: page.pageName, Phase: "page", assignmentId: assignmentId,
     participantId: participantId, projectId: projectId,
     ConditionIndex: assignedCondition?.conditionIndex ?? "", ConditionLabel: assignedCondition?.conditionLabel ?? "",
     StudyStatus: status, Trial: page.trialNumber || "",
@@ -358,7 +358,6 @@ function prepareResults() {
   results = trials.map((trial, index) => ({
     trial_type: "gamble-choice",
     Phase: "choice",
-    Subject: subjectId,
     participantId: participantId,
     projectId: projectId,
     assignmentId: assignmentId,
@@ -638,7 +637,7 @@ async function runTrial(trial, resultRow = null) {
   const trialNumber = resultRow ? resultRow.Trial : practiceResults.length + 1;
   const trialDetails = { taskPhase, trialNumber, ...trial };
   const row = resultRow || {
-    trial_type: "gamble-practice", Phase: "practice", Subject: subjectId, assignmentId: assignmentId,
+    trial_type: "gamble-practice", Phase: "practice", assignmentId: assignmentId,
     Trial: trialNumber, Gain: trial.gain, Loss: trial.loss, Fontsize: trial.gainLarge, GainOnLeft: trial.gainOnLeft,
     Choice: "", RT: "", KeyResponse: ""
   };
@@ -1035,7 +1034,6 @@ function summaryOnlyRow(status) {
   return {
     trial_type: "session-summary",
     Phase: "summary",
-    Subject: subjectId,
     participantId: participantId,
     projectId: projectId,
     assignmentId: assignmentId,
