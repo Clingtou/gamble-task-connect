@@ -226,7 +226,6 @@ function setStoredStudyStatus(status, extra = {}) {
 }
 
 function getStoredCompletionSnapshot() {
-  if (previewMode) return null;
   try {
     const stored = window.localStorage.getItem(completionSnapshotKey);
     const snapshot = stored ? JSON.parse(stored) : null;
@@ -238,7 +237,6 @@ function getStoredCompletionSnapshot() {
 }
 
 function setStoredCompletionSnapshot(snapshot) {
-  if (previewMode) return false;
   try {
     window.localStorage.setItem(completionSnapshotKey, JSON.stringify(snapshot));
     return true;
@@ -737,7 +735,7 @@ async function runTask() {
   closePageVisit();
   const completionSnapshot = createCompletionSnapshot();
   setStoredCompletionSnapshot(completionSnapshot);
-  showPaymentResult({ isSaving: true });
+  showDataSavingScreen();
   const savedToPipe = await saveToDataPipe("completed", completionSnapshot);
   if (aborted) return;
   if (!savedToPipe) {
@@ -933,46 +931,40 @@ function restoreCompletedStudy(snapshot) {
     showPaymentResult();
     return;
   }
-  showPaymentResult({ isSaving: true });
+  showDataSavingScreen();
   void resumePendingCompletion(snapshot);
 }
 
-function showDataPipeSaveFailure() {
+function showDataSavingScreen() {
   const validationRejected = dataPipeSaveError?.code === "INVALID_DATA";
-  const recoveryMessage = validationRejected
-    ? "Please keep this page open and contact the researcher. The study's online storage rejected the data. Select Retry after the researcher has corrected the storage validation settings. You can also download a backup copy if needed."
-    : "Please keep this page open and select Retry. You can also download a backup copy if needed.";
+  const retryMessage = validationRejected
+    ? "The online storage rejected the data. Please keep this page open and select Retry after the researcher has corrected the storage validation settings."
+    : "Please keep this page open and select Retry.";
   showContent(`
-    <h1>Data could not be saved online.</h1>
-    <div class="termination-warning"><strong>Your responses have not yet been saved online.</strong><p>${recoveryMessage}</p><p id="save-error-detail" role="status"></p></div>
-    <button id="retry-save" class="content-button" type="button">Retry</button>
-    <button id="download-backup" class="content-button" type="button">Download a backup copy</button>
-  `, "end-page");
-  phase = "save_error";
-  if (dataPipeSaveError) {
-    document.getElementById("save-error-detail").textContent = `Save error: ${dataPipeSaveError.code}. ${dataPipeSaveError.message}`;
-  }
-  const backupButton = document.getElementById("download-backup");
-  backupButton.disabled = dataDownloaded;
-  if (dataDownloaded) backupButton.textContent = "Backup downloaded";
-  backupButton.addEventListener("click", () => {
-    if (aborted || phase !== "save_error") return;
-    downloadData("completed");
-    backupButton.disabled = true;
-    backupButton.textContent = "Backup downloaded";
-  });
+    <h2>Saving your responses...</h2>
+    <p>Please keep this page open. Your payment result will appear after your data have been saved online.</p>
+    ${dataPipeSaveError ? `<div class="termination-warning"><strong>Your responses have not yet been saved online.</strong><p>${retryMessage}</p><p id="save-error-detail" role="status"></p></div><button id="retry-save" class="content-button" type="button">Retry</button>` : ""}
+  `, "loading-page");
+  phase = "saving";
+  if (!dataPipeSaveError) return;
+  document.getElementById("save-error-detail").textContent = `Save error: ${dataPipeSaveError.code}. ${dataPipeSaveError.message}`;
   document.getElementById("retry-save").addEventListener("click", async (event) => {
     const button = event.currentTarget;
     button.disabled = true;
     button.textContent = "Saving...";
-    const saved = await saveToDataPipe("completed", getStoredCompletionSnapshot());
+    const completionSnapshot = getStoredCompletionSnapshot();
+    const saved = await saveToDataPipe("completed", completionSnapshot);
     if (aborted) return;
     if (saved) {
-      completeStudyAfterSave();
+      completeStudyAfterSave(completionSnapshot);
     } else {
-      showDataPipeSaveFailure();
+      showDataSavingScreen();
     }
   });
+}
+
+function showDataPipeSaveFailure() {
+  showDataSavingScreen();
 }
 
 function drawPaymentResult() {
@@ -1036,7 +1028,7 @@ function paymentGambleHtml(trial) {
   `;
 }
 
-function showPaymentResult({ isSaving = false } = {}) {
+function showPaymentResult() {
   const result = paymentResult;
   let outcomeExplanation;
   let bonusCalculation;
@@ -1060,10 +1052,10 @@ function showPaymentResult({ isSaving = false } = {}) {
       <p><strong>Your bonus</strong> is ${bonusCalculation} = <strong>${result.bonusCents} cents ($${result.bonusDollars})</strong>.</p>
       <p>Your total payment is $${result.totalPaymentDollars}. And your bonus will be paid separately within <strong>14 business days</strong>.</p>
     </div>
-    ${isSaving ? "<p class=\"payment-saving-status\" role=\"status\">Saving your data. Please keep this page open.</p>" : "<button id=\"finish-study\" class=\"content-button\" type=\"button\">Finish</button>"}
+    <button id="finish-study" class="content-button" type="button">Finish</button>
   `, "result-page");
   phase = "result";
-  if (!isSaving) document.getElementById("finish-study").addEventListener("click", finishStudy);
+  document.getElementById("finish-study").addEventListener("click", finishStudy);
 }
 
 function applySummaryToResults(status) {
