@@ -12,7 +12,7 @@ const CONNECT_COMPLETION_URL = "https://connect.cloudresearch.com/participant/pr
 const CSV_COLUMNS = [
   "trial_type", "Phase", "participantId", "projectId", "assignmentId",
   "datapipe_experiment_id", "datapipe_condition_source", "ConditionIndex", "ConditionLabel",
-  "AcceptKey", "Gain", "Loss", "Fontsize", "GainOnLeft", "Choice", "RT", "KeyResponse", "Trial",
+  "AcceptKey", "Trial", "Gain", "Loss", "Fontsize", "GainOnLeft", "Choice", "RT", "KeyResponse",
   "ComprehensionAttempts", "ComprehensionPassed", "ComprehensionIncorrectItems", "ComprehensionResponseJSON",
   "PostTaskFontSizeRating", "PostTaskAmountReadingOrder", "PostTaskAmountReadingOrderOther",
   "PostTaskFontReadingOrder", "PostTaskFontReadingOrderOther", "PostTaskFontPattern", "PostTaskFontPatternOther",
@@ -41,7 +41,7 @@ const PRACTICE_TEMPLATE = [
 ];
 
 const TEXT = {
-  postComprehension: "You are now ready to begin the decision task.\n\nIt will start with three practice trials on a GRAY background.\nDuring the practice trials and main task,\nuse only the keyboard; do not use a mouse or trackpad.\n\nPress the “SPACEBAR” when you are ready to continue.",
+  postComprehension: "You are now ready to begin the decision task.\nIt will start with three practice trials on a GRAY background.\n\nDuring the practice trials and main task,\nuse only the keyboard; do not use a mouse or trackpad.\n\nPress the “SPACEBAR” when you are ready to continue.",
   practice: "You will now complete three practice trials.\nThese trials will not affect your bonus.\n\nPress “ ↑ ” to accept and “ ↓ ” to reject.\n\nPress the “SPACEBAR” when you are ready to continue.",
   start: "Practice completed! The main task is about to begin.\n\nYour decision time will be recorded,\nso once the task begins, please do not get distracted.\nPlease stay focused until you finish the task.\n\nIf you are ready,\npress the \"SPACEBAR\" to start immediately."
 };
@@ -70,6 +70,7 @@ const assignmentId = urlParameters.get("assignmentId")?.trim() || randomId(12);
 const subjectId = participantId !== "missing" ? participantId : getOrCreateAnonymousSubjectId();
 const previewMode = urlParameters.get("preview") === "1" || participantId === "missing";
 const studyLockKey = `gamble_task_status_${subjectId}_${projectId}`;
+const completionSnapshotKey = `${studyLockKey}_completion`;
 const dataFilename = `${safeFilename(subjectId)}_${safeFilename(assignmentId)}_${Date.now()}_gamble.csv`;
 
 let assignedCondition = null;
@@ -222,6 +223,46 @@ function setStoredStudyStatus(status, extra = {}) {
   } catch (error) {
     // Continue if localStorage is unavailable.
   }
+}
+
+function getStoredCompletionSnapshot() {
+  if (previewMode) return null;
+  try {
+    const stored = window.localStorage.getItem(completionSnapshotKey);
+    const snapshot = stored ? JSON.parse(stored) : null;
+    if (!snapshot || typeof snapshot.csv !== "string" || !snapshot.filename || !snapshot.paymentResult) return null;
+    return snapshot;
+  } catch (error) {
+    return null;
+  }
+}
+
+function setStoredCompletionSnapshot(snapshot) {
+  if (previewMode) return false;
+  try {
+    window.localStorage.setItem(completionSnapshotKey, JSON.stringify(snapshot));
+    return true;
+  } catch (error) {
+    // The study can still finish normally when localStorage is unavailable.
+    return false;
+  }
+}
+
+function createCompletionSnapshot() {
+  return {
+    version: 1,
+    state: "saving",
+    createdAt: Date.now(),
+    filename: dataFilename,
+    csv: buildCsv("completed"),
+    paymentResult
+  };
+}
+
+function markCompletionSnapshotSaved(snapshot) {
+  const savedSnapshot = { ...snapshot, state: "saved", savedAt: Date.now() };
+  setStoredCompletionSnapshot(savedSnapshot);
+  return savedSnapshot;
 }
 
 function isLockedStudyStatus(statusRecord) {
@@ -693,14 +734,17 @@ async function runTask() {
 
   paymentResult = drawPaymentResult();
   applySummaryToResults("completed");
-  showContent("<h2>Saving your data...</h2><p>Please do not close this page.</p>", "loading-page");
-  const savedToPipe = await saveToDataPipe("completed");
+  closePageVisit();
+  const completionSnapshot = createCompletionSnapshot();
+  setStoredCompletionSnapshot(completionSnapshot);
+  showPaymentResult({ isSaving: true });
+  const savedToPipe = await saveToDataPipe("completed", completionSnapshot);
   if (aborted) return;
   if (!savedToPipe) {
     showDataPipeSaveFailure();
     return;
   }
-  completeStudyAfterSave();
+  completeStudyAfterSave(completionSnapshot);
 }
 
 async function postComprehensionAndWait() {
@@ -854,13 +898,43 @@ async function postTaskQuestionsAndWait() {
   return !aborted && postTaskResponses.completed;
 }
 
-function completeStudyAfterSave() {
+function completeStudyAfterSave(completionSnapshot = null) {
+  if (completionSnapshot) markCompletionSnapshotSaved(completionSnapshot);
   setStoredStudyStatus("completed", {
     selected_trial: paymentResult.trialNumber,
     final_tokens: paymentResult.finalTokens,
     bonus_dollars: paymentResult.bonusDollars
   });
   showPaymentResult();
+}
+
+async function resumePendingCompletion(snapshot) {
+  const saved = await saveToDataPipe("completed", snapshot);
+  if (saved) {
+    completeStudyAfterSave(snapshot);
+  } else {
+    showDataPipeSaveFailure();
+  }
+}
+
+function restoreCompletedStudy(snapshot) {
+  paymentResult = snapshot.paymentResult;
+  practiceHasStarted = true;
+  fullscreenAbortArmed = false;
+  plannedFullscreenExit = true;
+  activityStopped = true;
+  if (snapshot.state === "saved") {
+    dataPipeSaved = true;
+    setStoredStudyStatus("completed", {
+      selected_trial: paymentResult.trialNumber,
+      final_tokens: paymentResult.finalTokens,
+      bonus_dollars: paymentResult.bonusDollars
+    });
+    showPaymentResult();
+    return;
+  }
+  showPaymentResult({ isSaving: true });
+  void resumePendingCompletion(snapshot);
 }
 
 function showDataPipeSaveFailure() {
@@ -891,7 +965,7 @@ function showDataPipeSaveFailure() {
     const button = event.currentTarget;
     button.disabled = true;
     button.textContent = "Saving...";
-    const saved = await saveToDataPipe("completed");
+    const saved = await saveToDataPipe("completed", getStoredCompletionSnapshot());
     if (aborted) return;
     if (saved) {
       completeStudyAfterSave();
@@ -962,7 +1036,7 @@ function paymentGambleHtml(trial) {
   `;
 }
 
-function showPaymentResult() {
+function showPaymentResult({ isSaving = false } = {}) {
   const result = paymentResult;
   let outcomeExplanation;
   let bonusCalculation;
@@ -986,10 +1060,10 @@ function showPaymentResult() {
       <p><strong>Your bonus</strong> is ${bonusCalculation} = <strong>${result.bonusCents} cents ($${result.bonusDollars})</strong>.</p>
       <p>Your total payment is $${result.totalPaymentDollars}. And your bonus will be paid separately within <strong>14 business days</strong>.</p>
     </div>
-    <button id="finish-study" class="content-button" type="button">Finish</button>
+    ${isSaving ? "<p class=\"payment-saving-status\" role=\"status\">Saving your data. Please keep this page open.</p>" : "<button id=\"finish-study\" class=\"content-button\" type=\"button\">Finish</button>"}
   `, "result-page");
   phase = "result";
-  document.getElementById("finish-study").addEventListener("click", finishStudy);
+  if (!isSaving) document.getElementById("finish-study").addEventListener("click", finishStudy);
 }
 
 function applySummaryToResults(status) {
@@ -1122,14 +1196,14 @@ function downloadData(status) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function saveToDataPipe(status) {
+function saveToDataPipe(status, completionSnapshot = null) {
   if (status !== "completed") return Promise.resolve(false);
   // Serialize retries to prevent concurrent writes to the same filename.
-  uploadQueue = uploadQueue.catch(() => false).then(() => uploadToDataPipe(status));
+  uploadQueue = uploadQueue.catch(() => false).then(() => uploadToDataPipe(status, completionSnapshot));
   return uploadQueue;
 }
 
-async function uploadToDataPipe(status) {
+async function uploadToDataPipe(status, completionSnapshot = null) {
   if (status !== "completed") return false;
   if (dataPipeSaved) return true;
   dataPipeSaveError = null;
@@ -1140,8 +1214,8 @@ async function uploadToDataPipe(status) {
 
   const requestBody = JSON.stringify({
     experimentID: DATAPIPE_EXPERIMENT_ID,
-    filename: dataFilename,
-    data: buildCsv(status)
+    filename: completionSnapshot?.filename || dataFilename,
+    data: completionSnapshot?.csv || buildCsv(status)
   });
   const requestBytes = new Blob([requestBody]).size;
   try {
@@ -1161,9 +1235,9 @@ async function uploadToDataPipe(status) {
       method: "POST",
       headers,
       body,
-      // Completed data can exceed the browser's 64 KiB keepalive quota.
-      // Small termination reports may still continue after the page closes.
-      keepalive: status !== "completed" && uploadBytes < 64 * 1024
+      // A small completed-data request can continue while the page unloads.
+      // Larger requests are restored from the local completion snapshot.
+      keepalive: uploadBytes < 64 * 1024
     });
     const payload = await response.json().catch(() => null);
     if (!response.ok || payload?.error || payload?.message !== "Success") {
@@ -1186,6 +1260,7 @@ async function uploadToDataPipe(status) {
       return false;
     }
     dataPipeSaved = true;
+    if (completionSnapshot) markCompletionSnapshotSaved(completionSnapshot);
     closePageVisit();
     activityStopped = true;
     return true;
@@ -1244,6 +1319,13 @@ function handleFullscreenChange() {
     if (fullscreenExitTimer) window.clearTimeout(fullscreenExitTimer);
     fullscreenExitTimer = window.setTimeout(() => {
       if (pageIsUnloading || plannedFullscreenExit || currentFullscreenElement() || !fullscreenAbortArmed) return;
+      if (getStoredCompletionSnapshot()) {
+        // After all responses are complete, the payment result can safely be
+        // revisited outside fullscreen while any pending upload is resumed.
+        fullscreenAbortArmed = false;
+        plannedFullscreenExit = true;
+        return;
+      }
       if (!practiceHasStarted) {
         showPrepracticeRecovery("Fullscreen mode was exited before the practice trials began.");
         return;
@@ -1404,7 +1486,10 @@ document.addEventListener("MSFullscreenChange", handleFullscreenChange);
 
 startPageVisit("welcome", { pageName: "welcome" });
 const storedStatus = getStoredStudyStatus();
-if (isLockedStudyStatus(storedStatus)) {
+const storedCompletionSnapshot = getStoredCompletionSnapshot();
+if (storedCompletionSnapshot) {
+  restoreCompletedStudy(storedCompletionSnapshot);
+} else if (isLockedStudyStatus(storedStatus)) {
   showLockedStatus(storedStatus);
 } else if (storedStatus && storedStatus.status === "prepractice") {
   welcomeError.textContent = "This study was restarted before the practice trials began. You may enter fullscreen mode again. Once practice begins, do not exit fullscreen mode, or the study cannot continue.";
